@@ -3,6 +3,9 @@ using System.Collections;
 
 public class PlayerController : MonoBehaviour
 {
+
+
+
     public float moveSpeed = 5f; // Vitesse de déplacement horizontal
     public float jumpForce = 10f; // Force de saut initial
     public float jumpHoldForce = 5f; // Force appliquée tant que la touche Espace est maintenue
@@ -11,7 +14,6 @@ public class PlayerController : MonoBehaviour
     public float spaceMoveSpeed = 8f; // Vitesse de déplacement en phase de vaisseau
     public float spaceLiftForce = 10f; // Force de montée du vaisseau
     public float gravityScale = 1f; // Échelle de gravité normale du joueur
-    public float landingRotationSpeed = 5f; // Vitesse d'ajustement de la rotation lors de l'atterrissage
 
     // Variables pour Space Invader phase
     public GameObject projectilePrefab; // Préfab pour les tirs
@@ -22,17 +24,21 @@ public class PlayerController : MonoBehaviour
     private Rigidbody2D rb;
     private bool isGrounded; // Pour vérifier si le joueur est au sol
     private float jumpTimeCounter; // Compteur de temps pour la durée du saut
-    private bool isJumping; // Pour vérifier si le joueur est en train de sauter
     private bool isSpacePhase = false; // Pour vérifier si le joueur est en mode vaisseau spatial
     private bool isInZone = false; // Pour vérifier si le joueur est dans une zone de changement de gameplay
     private bool isInSpaceInvaderZone = false; // Pour vérifier si le joueur est dans la zone Space Invader
-    private bool isLanding = false; // Pour vérifier si le joueur est en phase d'atterrissage
+
+    public float compressionDuration = 0.1f;  // Durée de la compression avant le saut
+    public float smoothDuration = 0.2f;       // Durée pour que la transition soit fluide
+    public Vector3 compressedScale = new Vector3(1f, 0.8f, 1f); // Échelle compressée
+    public Vector3 normalScale = new Vector3(1f, 1f, 1f);       // Échelle normale
 
     void Start()
     {
         rb = GetComponent<Rigidbody2D>();
         rb.gravityScale = gravityScale; // Initialiser la gravité
     }
+
 
     void Update()
     {
@@ -58,18 +64,18 @@ public class PlayerController : MonoBehaviour
     // Fonction pour gérer la phase de course standard
     void HandleRunningPhase()
     {
-        rb.velocity = new Vector2(moveSpeed, rb.velocity.y);
+        rb.velocity = new Vector2(moveSpeed, rb.velocity.y); // Appliquer la vitesse horizontale
 
         if (Input.GetKeyDown(KeyCode.Space) && isGrounded)
         {
-            isJumping = true;
             jumpTimeCounter = maxJumpTime;
             rb.velocity = new Vector2(rb.velocity.x, jumpForce);
             isGrounded = false;
-            isLanding = false; // On saute, donc on n'est pas en phase d'atterrissage
+
+            // Lancer la coroutine pour une compression douce
+            StartCoroutine(SmoothCompressAndExtend());
         }
 
-        if (Input.GetKey(KeyCode.Space) && isJumping)
         {
             if (jumpTimeCounter > 0)
             {
@@ -78,27 +84,40 @@ public class PlayerController : MonoBehaviour
             }
             else
             {
-                isJumping = false;
             }
         }
 
         if (Input.GetKeyUp(KeyCode.Space))
         {
-            isJumping = false;
-        }
-
-        // Rotation en l'air
-        if (!isGrounded && !isLanding)
-        {
-            transform.Rotate(0, 0, -360f * Time.deltaTime); // Rotation du cube pendant le saut
-        }
-
-        // Atterrissage et ajustement de la rotation
-        if (isLanding)
-        {
-            AdjustLandingRotation();
         }
     }
+
+    IEnumerator SmoothCompressAndExtend()
+    {
+        // Compression douce
+        yield return LerpScale(compressedScale, compressionDuration);
+
+        // Revenir à l'échelle normale doucement pendant le saut
+        yield return LerpScale(normalScale, smoothDuration);
+    }
+
+    // Fonction pour interpoler l'échelle du joueur en douceur
+    IEnumerator LerpScale(Vector3 targetScale, float duration)
+    {
+        Vector3 currentScale = transform.localScale;
+        float elapsedTime = 0;
+
+        while (elapsedTime < duration)
+        {
+            transform.localScale = Vector3.Lerp(currentScale, targetScale, elapsedTime / duration);
+            elapsedTime += Time.deltaTime;
+            yield return null;  // Attendre jusqu'à la prochaine frame
+        }
+
+        // S'assurer que l'échelle finale est exactement celle désirée
+        transform.localScale = targetScale;
+    }
+
 
     // Fonction pour gérer la phase de vaisseau spatial
     void HandleSpacePhase()
@@ -123,7 +142,6 @@ public class PlayerController : MonoBehaviour
 
         if (Input.GetKeyDown(KeyCode.Space) && isGrounded)
         {
-            isJumping = true;
             rb.velocity = new Vector2(rb.velocity.x, jumpForce); // Saut avec Espace
         }
     }
@@ -186,7 +204,6 @@ public class PlayerController : MonoBehaviour
         rb.velocity = Vector2.zero; // Réinitialiser la vélocité du joueur
         rb.angularVelocity = 0f; // Réinitialiser la rotation angulaire (pour les collisions complexes)
         transform.rotation = Quaternion.identity; // Réinitialiser la rotation du joueur
-        isJumping = false; // Réinitialiser l'état de saut
         isGrounded = false; // Le joueur commence en l'air après le respawn
 
         StartCoroutine(DelayRespawn()); // Appeler la coroutine pour le délai
@@ -203,7 +220,6 @@ public class PlayerController : MonoBehaviour
         if (other.CompareTag("Zone"))
         {
             isInZone = true; // Activer les contrôles spéciaux
-            LockRotation(); // Ajuster la rotation du joueur pour qu'il soit bien droit
             rb.freezeRotation = true; // Verrouiller la rotation
         }
 
@@ -220,7 +236,7 @@ public class PlayerController : MonoBehaviour
         if (other.CompareTag("Zone"))
         {
             isInZone = false; // Désactiver les contrôles spéciaux
-            rb.freezeRotation = false; // Réactiver la rotation
+            rb.freezeRotation = false; // Réactiver la rotation si nécessaire
         }
 
         if (other.CompareTag("SpaceInvaderZone"))
@@ -230,20 +246,14 @@ public class PlayerController : MonoBehaviour
         }
     }
 
-    // Fonction pour ajuster la rotation du joueur afin qu'il soit bien droit
-    private void LockRotation()
-    {
-        // Arrondir la rotation pour que le joueur soit bien droit
-        float zRotation = Mathf.Round(transform.eulerAngles.z / 90) * 90;
-        transform.rotation = Quaternion.Euler(0, 0, zRotation);
-    }
-
     // Détecter si le joueur est au sol
     private void OnCollisionEnter2D(Collision2D collision)
     {
         if (collision.contacts[0].normal.y > 0.5f)
         {
             isGrounded = true; // Le joueur est au sol
+
+            // Arrêter l'animation de saut
         }
         else if (collision.gameObject.CompareTag("Obstacle"))
         {
@@ -257,29 +267,12 @@ public class PlayerController : MonoBehaviour
     }
 
     // Coroutine pour ajouter un délai après le respawn
+
+
+    // Coroutine pour ajouter un délai après le respawn
     private IEnumerator DelayRespawn()
     {
         yield return new WaitForSeconds(0.1f); // Attendre un court instant avant de permettre des interactions
         rb.velocity = Vector2.zero; // Assurer que la vélocité reste à zéro
-    }
-
-    // Fonction pour ajuster la rotation lors de l'atterrissage
-    private void AdjustLandingRotation()
-    {
-        // Calcul de l'angle de rotation naturel (0 ou 90 degrés)
-        float targetAngle = Mathf.Round(transform.eulerAngles.z / 90) * 90;
-
-        // Interpolation de la rotation vers l'angle souhaité
-        float newAngle = Mathf.LerpAngle(transform.eulerAngles.z, targetAngle, Time.deltaTime * landingRotationSpeed);
-
-        // Appliquer la nouvelle rotation
-        transform.rotation = Quaternion.Euler(0, 0, newAngle);
-
-        // Si on est proche de l'angle cible, on arrête l'ajustement
-        if (Mathf.Abs(newAngle - targetAngle) < 0.1f)
-        {
-            transform.rotation = Quaternion.Euler(0, 0, targetAngle);
-            isLanding = false; // Terminer la phase d'atterrissage
-        }
     }
 }
